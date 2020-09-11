@@ -3,47 +3,59 @@ import Foundation
 #if os(OSX)
     import WebKit
 #elseif os(iOS)
-    import UIKit
+    import WebKit
 #endif
 
-final class URLSessionDispatcher: Dispatcher {
-    
-    let serializer = EventSerializer()
-    let timeout: TimeInterval
-    let session: URLSession
-    let baseURL: URL
+public final class URLSessionDispatcher: Dispatcher {
 
-    private(set) var userAgent: String?
+    private let serializer = EventSerializer()
+    private let timeout: TimeInterval
+    private let session: URLSession
+    public let baseURL: URL
+
+    public private(set) var userAgent: String?
     
     /// Generate a URLSessionDispatcher instance
     ///
     /// - Parameters:
-    ///   - baseURL: The url of the SGAnalytics server. This url has to end in `piwik.php`.
+    ///   - baseURL: The url of the Matomo server. This url has to end in `piwik.php`.
     ///   - userAgent: An optional parameter for custom user agent.
-    init(baseURL: URL, userAgent: String? = nil) {                
+    public init(baseURL: URL, userAgent: String? = nil) {
         self.baseURL = baseURL
         self.timeout = 5
         self.session = URLSession.shared
+        if let userAgent = userAgent {
+            self.userAgent = userAgent
+        } else {
+            URLSessionDispatcher.generateDefaultUserAgent() { [weak self] userAgent in
+                self?.userAgent = userAgent
+            }
+    }
+    }
+    
+    private static func generateDefaultUserAgent(_ completion: @escaping (String) -> Void) {
+        let useragentSuffix = " MatomoTracker SDK URLSessionDispatcher"
         DispatchQueue.main.async {
-            self.userAgent = userAgent ?? URLSessionDispatcher.defaultUserAgent()
-        }
-    }
-    
-    private static func defaultUserAgent() -> String {
-        assertMainThread()
         #if os(OSX)
-            let webView = WebView(frame: .zero)
-            let currentUserAgent = webView.stringByEvaluatingJavaScript(from: "navigator.userAgent") ?? ""
+        let webView = WebView(frame: .zero)
+        let userAgent = webView.stringByEvaluatingJavaScript(from: "navigator.userAgent") ?? ""
+        completion(userAgent.appending(useragentSuffix))
         #elseif os(iOS)
-            let webView = UIWebView(frame: .zero)
-            let currentUserAgent = webView.stringByEvaluatingJavaScript(from: "navigator.userAgent") ?? ""
+        let webView = WKWebView(frame: .zero)
+        webView.evaluateJavaScript("navigator.userAgent") { (result, error) -> Void in
+         if let userAgent = result as? String {
+        completion(userAgent.appending(useragentSuffix))
+        } else {
+        completion(useragentSuffix)
+         }
+        }
         #elseif os(tvOS)
-            let currentUserAgent = ""
-        #endif
-        return currentUserAgent.appending(" SGAnalytics SDK URLSessionDispatcher")
+        completion(useragentSuffix)
+         #endif
+          }
     }
-    
-    func send(events: [Event], success: @escaping ()->(), failure: @escaping (_ error: Error)->()) {
+        
+    public func send(events: [Event], success: @escaping ()->(), failure: @escaping (_ error: Error)->()) {
         let jsonBody: Data
         do {
             jsonBody = try serializer.jsonData(for: events)
